@@ -11,7 +11,6 @@
 #include <d3d12.h>
 #include <dxgi1_4.h>
 
-#include <string>
 #include <exception>
 
 namespace Cass {
@@ -34,7 +33,7 @@ namespace Cass {
 
     class D3d12ResourceManager {
     public:
-        D3d12ResourceManager(UINT width, UINT height, std::wstring name, HWND hWnd);
+        D3d12ResourceManager(UINT width, UINT height, HWND hWnd);
     
         void OnInit();
         void OnUpdate();

@@ -39,6 +39,9 @@
     <ClInclude Include="include\d3d12\ResourceManager.hpp">
       <Filter>Header Files\d3d12</Filter>
     </ClInclude>
+    <ClInclude Include="include\gui\window.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Cass.cpp">
@@ -46,6 +49,9 @@
     </ClCompile>
     <ClCompile Include="src\d3d12\ResourceManager.cpp">
       <Filter>Source Files\d3d12</Filter>
+    </ClCompile>
+    <ClCompile Include="src\gui\window.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

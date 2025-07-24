@@ -23,7 +23,7 @@ const char* ComException::what() const {
 
 // ---------- Public Methods
 
-D3d12ResourceManager::D3d12ResourceManager(UINT width, UINT height, std::wstring name, HWND hWnd) {
+D3d12ResourceManager::D3d12ResourceManager(UINT width, UINT height, HWND hWnd) {
     m_width = width;
     m_height = height;
     m_hWnd = hWnd;

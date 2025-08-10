@@ -4,22 +4,14 @@
 //
 
 #include <d3d12/ResourceManager.hpp>
+#include <utils.hpp>
 
 #include <synchapi.h>
 #include <dxgi1_6.h>
 #include <d3dcompiler.h>
 #include <directx/d3dx12.h>
 
-#include <sstream>
-
 using namespace Cass;
-
-const char* ComException::what() const {
-    std::ostringstream ss;
-    ss << "Faliure, HRESULT : " << std::hex << result << '\n';
-    std::string str = ss.str();
-    return str.c_str();
-}
 
 // ---------- Public Methods
 
@@ -33,19 +25,27 @@ D3d12ResourceManager::D3d12ResourceManager(UINT width, UINT height, HWND hWnd) {
 }
 
 void D3d12ResourceManager::OnInit() {
-    LoadPipeline();
+    LoadSizeIndependentResources();
+    LoadSizeDependentResources();
     LoadAssets();
+
+    // Disable Alt + Enter to switch full screen
+    ThrowIfFailed(m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER));
 }
 
 void D3d12ResourceManager::OnUpdate() {
 
 }
 
+void D3d12ResourceManager::OnSize(UINT width, UINT height) {
+    // TOOD
+}
+
 void D3d12ResourceManager::OnRender() {
     PopulateCommandList();
 
     // Execute the command list
-    ID3D12CommandList* ppCommandList[] = { m_commandList.Get() };
+    ID3D12CommandList* ppCommandList[] = { m_sceneCommandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(ppCommandList), ppCommandList);
 
     // Present the frame
@@ -62,7 +62,7 @@ void D3d12ResourceManager::OnDestroy() {
 
 // ---------- Private Methods
 
-void D3d12ResourceManager::LoadPipeline() {
+void D3d12ResourceManager::LoadSizeIndependentResources() {
 #ifdef _DEBUG
     // Enable D3D12 Debug Layer
     {
@@ -73,11 +73,10 @@ void D3d12ResourceManager::LoadPipeline() {
     }
 #endif
 
-    ComPtr<IDXGIFactory4> factory;
-    ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+    ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&m_factory)));
 
     ComPtr<IDXGIAdapter1> hardwareAdapter;
-    GetHardwareAdapter(factory.Get(), &hardwareAdapter);
+    GetHardwareAdapter(m_factory.Get(), &hardwareAdapter);
 
     ThrowIfFailed(D3D12CreateDevice(
         hardwareAdapter.Get(),
@@ -91,7 +90,9 @@ void D3d12ResourceManager::LoadPipeline() {
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
     ThrowIfFailed(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_commandQueue)));
+}
 
+void D3d12ResourceManager::LoadSizeDependentResources() {
     // Describe and create the swap chain
     DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
     swapChainDesc.BufferCount = m_frameCount;
@@ -105,18 +106,15 @@ void D3d12ResourceManager::LoadPipeline() {
     swapChainDesc.Windowed = TRUE;
 
     ComPtr<IDXGISwapChain> swapChain;
-    ThrowIfFailed(factory->CreateSwapChain(
+    ThrowIfFailed(m_factory->CreateSwapChain(
         m_commandQueue.Get(),
         &swapChainDesc,
         &swapChain
     ));
     ThrowIfFailed(swapChain.As(&m_swapChain));
 
-    // Disable Alt + Enter to switch full screen
-    ThrowIfFailed(factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER));
-
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
-    
+
     // Create descriptor heaps 
     {
         D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
@@ -140,7 +138,7 @@ void D3d12ResourceManager::LoadPipeline() {
         }
     }
 
-    ThrowIfFailed(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocator)));
+    ThrowIfFailed(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_sceneCommandAllocator)));
 }
 
 void D3d12ResourceManager::LoadAssets() {
@@ -192,49 +190,71 @@ void D3d12ResourceManager::LoadAssets() {
     }
 
     // Create the command list
-    ThrowIfFailed(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocator.Get(), m_pipelineState.Get(), IID_PPV_ARGS(&m_commandList)));
+    ThrowIfFailed(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_sceneCommandAllocator.Get(), m_pipelineState.Get(), IID_PPV_ARGS(&m_sceneCommandList)));
 
     // Command Lists are created in recording state, but there is nothing
     // to record sate. Yet the main loop expects it to be closed, so close it now
-    ThrowIfFailed(m_commandList->Close());
+    ThrowIfFailed(m_sceneCommandList->Close());
+
+    // Single use command allocator and command list for loading resources
+    ComPtr<ID3D12CommandAllocator> commandAllocator;
+    ComPtr<ID3D12GraphicsCommandList> commandList;
+    ThrowIfFailed(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator)));
+    ThrowIfFailed(m_device->CreateCommandList(NULL, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(&commandList)));
 
     // Create the vertex buffer
+    ComPtr<ID3D12Resource> vertexBufferUpload;
     {
         Vertex vertices[] = {
             { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f, 1.0f } },
             { { -0.5f, 0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f, 1.0f } },
             { { 0.5f, 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f, 1.0f } }
         };
-
         const UINT vertexBufferSize = sizeof(vertices);
 
-        // Note: using upload heaps to transfer static data like vert buffers is not 
-        // recommended. Every time the GPU needs it, the upload heap will be marshalled 
-        // over. Please read up on Default Heap usage. An upload heap is used here for 
-        // code simplicity and because there are very few verts to actually transfer.
-        CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_UPLOAD);
+        CD3DX12_HEAP_PROPERTIES heapProps(D3D12_HEAP_TYPE_DEFAULT);
         auto desc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+        ThrowIfFailed(m_device->CreateCommittedResource(
+            &heapProps,
+            D3D12_HEAP_FLAG_NONE,
+            &desc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&m_vertexBuffer)
+        ));
+
+        heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
         ThrowIfFailed(m_device->CreateCommittedResource(
             &heapProps,
             D3D12_HEAP_FLAG_NONE,
             &desc,
             D3D12_RESOURCE_STATE_GENERIC_READ,
             nullptr,
-            IID_PPV_ARGS(&m_vertexBuffer)
+            IID_PPV_ARGS(&vertexBufferUpload)
         ));
-
-        // Copy the triangle data to the vertex buffer
+        
+        // Copy data to the intermediate upload heap
         UINT8* pVertexDataBegin;
-        CD3DX12_RANGE readRange(0, 0); // We do not intend to read from this resource on the CPU
-        ThrowIfFailed(m_vertexBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin)));
+        CD3DX12_RANGE readRange(0, 0); // Resourced is not intended to be read from the CPU
+        ThrowIfFailed(vertexBufferUpload->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin)));
         memcpy(pVertexDataBegin, vertices, vertexBufferSize);
-        m_vertexBuffer->Unmap(0, nullptr);
+        vertexBufferUpload->Unmap(0, nullptr);
+
+        // Schedule a copy from the upload heap to the vertex buffer 
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_vertexBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+        commandList->CopyBufferRegion(m_vertexBuffer.Get(), 0, vertexBufferUpload.Get(), 0, vertexBufferSize);
+        commandList->ResourceBarrier(1, &barrier);
 
         // Initialize the vertex buffer view
         m_vertexBufferView.BufferLocation = m_vertexBuffer->GetGPUVirtualAddress();
         m_vertexBufferView.StrideInBytes = sizeof(Vertex);
         m_vertexBufferView.SizeInBytes = vertexBufferSize;
     }
+
+    // Execute the command for copying the buffers
+    ThrowIfFailed(commandList->Close());
+    ID3D12CommandList* ppCommandLists[] = { commandList.Get() };
+    m_commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 
     // Create a synchronization object and wait until the data has been uploaded to the GPU
     {
@@ -271,37 +291,37 @@ void D3d12ResourceManager::PopulateCommandList() {
     // Reclaim the memory back that was associated with the command allocator
     // Command list allocators can only be reset when the associated command lists have finished execution on the GPU, otherwise the call will fail
     // apps should use fences to determine GPU execution progress.
-    ThrowIfFailed(m_commandAllocator->Reset());
+    ThrowIfFailed(m_sceneCommandAllocator->Reset());
 
     // Command list can be reset at any time, after which it goes into recording state
     // A command list can also be reset immediately after it is submitted without waiting for its completion
-    ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), m_pipelineState.Get()));
+    ThrowIfFailed(m_sceneCommandList->Reset(m_sceneCommandAllocator.Get(), m_pipelineState.Get()));
 
     // Set neccessary states
-    m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
-    m_commandList->RSSetViewports(1, &m_viewport);
-    m_commandList->RSSetScissorRects(1, &m_scissorRect);
+    m_sceneCommandList->SetGraphicsRootSignature(m_rootSignature.Get());
+    m_sceneCommandList->RSSetViewports(1, &m_viewport);
+    m_sceneCommandList->RSSetScissorRects(1, &m_scissorRect);
 
     // Indicate that the back buffer will be used as the render target
     auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    m_commandList->ResourceBarrier(1, &barrier);
+    m_sceneCommandList->ResourceBarrier(1, &barrier);
 
     CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_frameIndex, m_rtvDescSize);
-    m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+    m_sceneCommandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
     // Record commands
     const float clearColor[] = { 0.05f, 0.05f, 0.05f, 1.0f };
-    m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-    m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
-    m_commandList->DrawInstanced(3, 1, 0, 0);
+    m_sceneCommandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    m_sceneCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_sceneCommandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+    m_sceneCommandList->DrawInstanced(3, 1, 0, 0);
 
     // Indicate that the back buffer will now be used to present
     barrier = CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
-    m_commandList->ResourceBarrier(1, &barrier);
+    m_sceneCommandList->ResourceBarrier(1, &barrier);
 
     // Transition out of the recording state
-    ThrowIfFailed(m_commandList->Close());
+    ThrowIfFailed(m_sceneCommandList->Close());
 }
 
 void D3d12ResourceManager::GetHardwareAdapter(IDXGIFactory1* pFactory, IDXGIAdapter1** ppAdapter, bool reqHighPerfAdapter) {

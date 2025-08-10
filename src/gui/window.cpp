@@ -59,6 +59,10 @@ LRESULT CALLBACK Window::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         eventManager->OnPaint();
         break;
 
+    case WM_SIZE:
+        eventManager->OnSize(LOWORD(lParam), HIWORD(lParam));
+        break;
+
     case WM_DESTROY:
         PostQuitMessage(0);
         break;

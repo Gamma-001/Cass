@@ -16,6 +16,7 @@ std::unique_ptr<Cass::D3d12ResourceManager> resourceManager;
 class MainWindowEventHandler : public Cass::WindowEventHandler {
 public:
     void OnPaint() override;
+    void OnSize(int newWidth, int newHeight);
 };
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -56,8 +57,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 }
 
 void MainWindowEventHandler::OnPaint() {
-    if (resourceManager != nullptr) {
-        resourceManager->OnUpdate();
-        resourceManager->OnRender();
+    if (resourceManager == nullptr) {
+        return;
     }
+
+    resourceManager->OnUpdate();
+    resourceManager->OnRender();
+}
+
+void MainWindowEventHandler::OnSize(int newWidth, int newHeight) {
+    if (resourceManager == nullptr) {
+        return;
+    }
+
+    resourceManager->OnSize(newWidth, newHeight);
 }

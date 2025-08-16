@@ -15,18 +15,17 @@ using namespace Cass;
 
 // ---------- Public Methods
 
-D3d12ResourceManager::D3d12ResourceManager(UINT width, UINT height, HWND hWnd) {
-    m_width = width;
-    m_height = height;
-    m_hWnd = hWnd;
-    m_viewport = D3D12_VIEWPORT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height));
-    m_scissorRect = D3D12_RECT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height));
-    m_rtvDescSize = 0;
-}
+D3d12ResourceManager::D3d12ResourceManager(UINT width, UINT height, HWND hWnd)
+    : m_width(width)
+    , m_height(height)
+    , m_hWnd(hWnd)
+    , m_windowVisible(true)
+    , m_viewport(D3D12_VIEWPORT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)))
+    , m_scissorRect(D3D12_RECT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)))
+    , m_rtvDescSize(0) { }
 
 void D3d12ResourceManager::OnInit() {
-    LoadSizeIndependentResources();
-    LoadSizeDependentResources();
+    LoadPipeline();
     LoadAssets();
 
     // Disable Alt + Enter to switch full screen
@@ -37,11 +36,46 @@ void D3d12ResourceManager::OnUpdate() {
 
 }
 
-void D3d12ResourceManager::OnSize(UINT width, UINT height) {
-    // TOOD
+void D3d12ResourceManager::OnSize(UINT width, UINT height, bool minimized) {
+    if (minimized) {
+        m_windowVisible = false;
+        return;
+    }
+    if (width == m_width && height == m_height) {
+        // Size did not change
+        return;
+    }
+
+    WaitForPreviousFrame();
+
+    // Release the resources that are referencing the swap chain (required for IDXGISwapChain::ResizeBuffer)
+    // And resize the buffers
+    for (UINT i = 0; i < m_frameCount; i++) {
+        m_renderTargets[i].Reset();
+    }
+    DXGI_SWAP_CHAIN_DESC scd = {};
+    m_swapChain->GetDesc(&scd);
+    ThrowIfFailed(m_swapChain->ResizeBuffers(m_frameCount, width, height, scd.BufferDesc.Format, scd.Flags));
+
+    // Reset the frame index to the current back buffer index
+    m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
+    m_height = height;
+    m_width = width;
+    m_windowVisible = true;
+
+    // Update the viewport
+    m_viewport.Height = height;
+    m_viewport.Width = width;
+
+    LoadSizeDependentResources();
 }
 
 void D3d12ResourceManager::OnRender() {
+    if (!m_windowVisible) {
+        // window is minized or not visible, do not render
+        return;
+    }
+
     PopulateCommandList();
 
     // Execute the command list
@@ -62,7 +96,7 @@ void D3d12ResourceManager::OnDestroy() {
 
 // ---------- Private Methods
 
-void D3d12ResourceManager::LoadSizeIndependentResources() {
+void D3d12ResourceManager::LoadPipeline() {
 #ifdef _DEBUG
     // Enable D3D12 Debug Layer
     {
@@ -90,9 +124,7 @@ void D3d12ResourceManager::LoadSizeIndependentResources() {
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
     ThrowIfFailed(m_device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_commandQueue)));
-}
 
-void D3d12ResourceManager::LoadSizeDependentResources() {
     // Describe and create the swap chain
     DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
     swapChainDesc.BufferCount = m_frameCount;
@@ -126,7 +158,11 @@ void D3d12ResourceManager::LoadSizeDependentResources() {
         m_rtvDescSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     }
 
-    // Create frame resources
+    ThrowIfFailed(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_sceneCommandAllocator)));
+}
+
+void D3d12ResourceManager::LoadSizeDependentResources() {
+    // Create the frame resources
     {
         CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(m_rtvHeap->GetCPUDescriptorHandleForHeapStart());
 
@@ -137,8 +173,6 @@ void D3d12ResourceManager::LoadSizeDependentResources() {
             rtvHandle.Offset(1, m_rtvDescSize);
         }
     }
-
-    ThrowIfFailed(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_sceneCommandAllocator)));
 }
 
 void D3d12ResourceManager::LoadAssets() {
@@ -201,6 +235,8 @@ void D3d12ResourceManager::LoadAssets() {
     ComPtr<ID3D12GraphicsCommandList> commandList;
     ThrowIfFailed(m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator)));
     ThrowIfFailed(m_device->CreateCommandList(NULL, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(&commandList)));
+
+    LoadSizeDependentResources();
 
     // Create the vertex buffer
     ComPtr<ID3D12Resource> vertexBufferUpload;

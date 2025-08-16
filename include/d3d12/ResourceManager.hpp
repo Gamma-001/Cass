@@ -20,7 +20,7 @@ namespace Cass {
     
         void OnInit();
         void OnUpdate();
-        void OnSize(UINT width, UINT height);
+        void OnSize(UINT width, UINT height, bool minimized);
         void OnRender();
         void OnDestroy();
 
@@ -33,21 +33,23 @@ namespace Cass {
         HWND m_hWnd;
         UINT m_width;
         UINT m_height;
+        bool m_windowVisible;
 
         // Pipeline objects
+        ComPtr<IDXGIFactory4>               m_factory;
+        ComPtr<ID3D12Device>                m_device;
+        ComPtr<IDXGISwapChain3>             m_swapChain;
+        ComPtr<ID3D12Resource>              m_renderTargets[m_frameCount];
+        ComPtr<ID3D12RootSignature>         m_rootSignature;
+        ComPtr<ID3D12PipelineState>         m_pipelineState;
+        ComPtr<ID3D12DescriptorHeap>        m_rtvHeap;
+        UINT                                m_rtvDescSize;
         D3D12_VIEWPORT                      m_viewport;
         D3D12_RECT                          m_scissorRect;
-        ComPtr<IDXGIFactory4>               m_factory;
-        ComPtr<IDXGISwapChain3>             m_swapChain;
-        ComPtr<ID3D12Device>                m_device;
-        ComPtr<ID3D12Resource>              m_renderTargets[m_frameCount];
+
         ComPtr<ID3D12CommandQueue>          m_commandQueue;
         ComPtr<ID3D12CommandAllocator>      m_sceneCommandAllocator;
         ComPtr<ID3D12GraphicsCommandList>   m_sceneCommandList;
-        ComPtr<ID3D12RootSignature>         m_rootSignature;
-        ComPtr<ID3D12DescriptorHeap>        m_rtvHeap;
-        ComPtr<ID3D12PipelineState>         m_pipelineState;
-        UINT                                m_rtvDescSize;
 
         // App resources
         ComPtr<ID3D12Resource>      m_vertexBuffer;
@@ -61,9 +63,9 @@ namespace Cass {
         ComPtr<ID3D12Fence> m_fence;
         UINT64 m_fenceValue;
 
-        void LoadSizeIndependentResources();
-        void LoadSizeDependentResources();
+        void LoadPipeline();
         void LoadAssets();
+        void LoadSizeDependentResources();
         void WaitForPreviousFrame();
         void PopulateCommandList();
         void GetHardwareAdapter(IDXGIFactory1* pFactory, IDXGIAdapter1** ppAdapter, bool reqHighPerfAdapter = false);

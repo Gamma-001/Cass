@@ -9,7 +9,7 @@ namespace Cass {
     class WindowEventHandler {
     public:
         virtual void OnPaint() = 0;
-        virtual void OnSize(int newWidth, int newHeight) = 0;
+        virtual void OnSize(int newWidth, int newHeight, bool minimized) = 0;
     };
 
     class Window {

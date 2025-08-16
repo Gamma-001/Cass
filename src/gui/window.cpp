@@ -60,7 +60,7 @@ LRESULT CALLBACK Window::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         break;
 
     case WM_SIZE:
-        eventManager->OnSize(LOWORD(lParam), HIWORD(lParam));
+        eventManager->OnSize(LOWORD(lParam), HIWORD(lParam), wParam == SIZE_MINIMIZED);
         break;
 
     case WM_DESTROY:

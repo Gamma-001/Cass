@@ -26,7 +26,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    Cass::Window mainWindow(hInstance, L"MainWindow", L"Cass", 800, 800);
+    Cass::Window mainWindow(hInstance, L"MainWindow", L"Cass", 400, 400);
     if (!mainWindow.Initialize(std::make_unique<MainWindowEventHandler>())) {
         return -1;
     }

@@ -11,6 +11,9 @@
 #include <d3dcompiler.h>
 #include <directx/d3dx12.h>
 
+#include <array>
+#include <iostream>
+
 using namespace Cass;
 
 // ---------- Public Methods
@@ -22,14 +25,19 @@ D3d12ResourceManager::D3d12ResourceManager(UINT width, UINT height, HWND hWnd)
     , m_windowVisible(true)
     , m_viewport(D3D12_VIEWPORT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)))
     , m_scissorRect(D3D12_RECT(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)))
-    , m_rtvDescSize(0) { }
+    , m_rtvDescSize(0)
+    , m_frameIndex(0)
+    , m_fenceEvent(NULL)
+    , m_fenceValue(0)
+    , m_vertexBufferView({})
+    , m_indexBufferView({}) {}
 
 void D3d12ResourceManager::OnInit() {
     LoadPipeline();
     LoadAssets();
 
     // Disable Alt + Enter to switch full screen
-    ThrowIfFailed(m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER));
+    /// ThrowIfFailed(m_factory->MakeWindowAssociation(m_hWnd, DXGI_MWA_NO_ALT_ENTER));
 }
 
 void D3d12ResourceManager::OnUpdate() {
@@ -63,9 +71,11 @@ void D3d12ResourceManager::OnSize(UINT width, UINT height, bool minimized) {
     m_width = width;
     m_windowVisible = true;
 
-    // Update the viewport
+    // Update the viewport and scissor rect
     m_viewport.Height = height;
     m_viewport.Width = width;
+    m_scissorRect.right = width;
+    m_scissorRect.bottom = height;
 
     LoadSizeDependentResources();
 }
@@ -111,12 +121,30 @@ void D3d12ResourceManager::LoadPipeline() {
 
     ComPtr<IDXGIAdapter1> hardwareAdapter;
     GetHardwareAdapter(m_factory.Get(), &hardwareAdapter);
+    std::array<D3D_FEATURE_LEVEL, 4> featureLevels{
+        D3D_FEATURE_LEVEL_12_1,
+        D3D_FEATURE_LEVEL_12_0,
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0
+    };
+    D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_1_0_GENERIC;
+    
+    for (auto& level : featureLevels) {
+        HRESULT hr = D3D12CreateDevice(
+            hardwareAdapter.Get(),
+            level,
+            IID_PPV_ARGS(&m_device)
+        );
+        if (SUCCEEDED(hr)) {
+            featureLevel = level;
+            break;
+        }
 
-    ThrowIfFailed(D3D12CreateDevice(
-        hardwareAdapter.Get(),
-        D3D_FEATURE_LEVEL_11_0,
-        IID_PPV_ARGS(&m_device)
-    ));
+        if (level == featureLevels.back()) {
+            ThrowIfFailed(hr);
+        }
+    }
+    OutputDebugStringA(std::format("Creating devcice with feature level: {:d}.{:d}\n", (featureLevel >> 12) % 16, (featureLevel >> 8) % 16).c_str());
 
     // Describe and create the command queue
     D3D12_COMMAND_QUEUE_DESC queueDesc = {};
@@ -178,7 +206,7 @@ void D3d12ResourceManager::LoadSizeDependentResources() {
 void D3d12ResourceManager::LoadAssets() {
     // Create an empty root signature
     {
-        CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+        CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
         rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
         ComPtr<ID3DBlob> signature;
@@ -307,8 +335,6 @@ void D3d12ResourceManager::LoadAssets() {
 }
 
 void D3d12ResourceManager::WaitForPreviousFrame() {
-    // WAITING FOR THE FRAME TO COMPLETE BEFORE CONTINUING IS NOT BEST PRACTICE.
-
     // Signal and increment the fence value.
     const UINT64 fence = m_fenceValue;
     ThrowIfFailed(m_commandQueue->Signal(m_fence.Get(), fence));
@@ -317,7 +343,7 @@ void D3d12ResourceManager::WaitForPreviousFrame() {
     // Wait until the previous frame is finished
     if (m_fence->GetCompletedValue() < fence) {
         ThrowIfFailed(m_fence->SetEventOnCompletion(fence, m_fenceEvent));
-        WaitForSingleObject(m_fenceEvent, INFINITE);
+        WaitForSingleObjectEx(m_fenceEvent, INFINITE, false);
     }
 
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
@@ -346,7 +372,7 @@ void D3d12ResourceManager::PopulateCommandList() {
     m_sceneCommandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
     // Record commands
-    const float clearColor[] = { 0.05f, 0.05f, 0.05f, 1.0f };
+    const float clearColor[] = { 0.07f, 0.03f, 0.05f, 1.0f };
     m_sceneCommandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
     m_sceneCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     m_sceneCommandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
